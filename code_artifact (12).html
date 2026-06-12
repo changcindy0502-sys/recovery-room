@@ -1,0 +1,1674 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>恢復室病人運送回病房登記系統</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              light: '#F7F7F7',      // #F7F7F7 (背景淺灰底色)
+              soft: '#98C1D9',       // #98C1D9 (輔助粉藍)
+              primary: '#3D5A80',    // #3D5A80 (沈穩鋼藍)
+              accent: '#EE6C4D',     // #EE6C4D (警示珊瑚橘)
+              darkBg: '#1D2A3A',     // 深色背景
+              darkCard: '#253549',   // 深色卡片
+            }
+          },
+          animation: {
+            'pulse-fast': 'pulse 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'blink-danger': 'blinkDanger 1s infinite',
+          },
+          keyframes: {
+            blinkDanger: {
+              '0%, 100%': { backgroundColor: 'rgba(238, 108, 77, 0.1)', borderColor: 'rgba(238, 108, 77, 0.6)' },
+              '50%': { backgroundColor: 'rgba(238, 108, 77, 0.3)', borderColor: 'rgba(238, 108, 77, 1)' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Bootstrap Icons CDN -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  
+  <!-- SheetJS (XLSX) CDN 用於導出 Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Firebase Compatibility SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    /* 醫療護理站專用精緻捲軸 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    .dark ::-webkit-scrollbar-thumb {
+      background: #475569;
+    }
+    /* 質感陰影柔和發光 */
+    .glow-primary {
+      box-shadow: 0 0 12px rgba(61, 90, 128, 0.25);
+    }
+    .glow-accent {
+      box-shadow: 0 0 15px rgba(238, 108, 77, 0.4);
+    }
+  </style>
+</head>
+<body class="bg-[#F7F7F7] dark:bg-brand-darkBg text-slate-800 dark:text-slate-100 min-h-screen transition-colors duration-200 font-sans antialiased">
+
+  <!-- 頂部即時警示橫幅 (珊瑚橘 #EE6C4D 高可讀性警示) -->
+  <div id="urgentAlertBanner" class="hidden bg-brand-accent text-white px-4 py-2 text-center text-sm font-semibold flex items-center justify-center gap-2 animate-pulse glow-accent">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    <span>注意：目前有病人待運送時間已低於 15 分鐘，請儘速安排運送！</span>
+    <button onclick="closeAlertBanner()" class="ml-4 text-white hover:text-slate-200"><i class="bi bi-x-lg"></i></button>
+  </div>
+
+  <!-- 頂部導航列 -->
+  <header class="sticky top-0 z-40 bg-white/90 dark:bg-brand-darkCard/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <!-- 標題與更新資訊 -->
+      <div class="flex items-start gap-3">
+        <div class="p-2.5 bg-brand-soft/20 text-brand-primary rounded-2xl dark:bg-brand-soft/10 dark:text-brand-soft">
+          <i class="bi bi-hospital text-2xl"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight text-brand-primary dark:text-white flex items-center gap-2">
+            🚑 恢復室病人運送登記系統
+            <span class="text-xs font-normal px-2 py-0.5 bg-brand-soft/30 text-brand-primary dark:bg-brand-primary/40 dark:text-brand-soft rounded-full border border-brand-soft/50">
+              V2.6 Live
+            </span>
+          </h1>
+          <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2">
+            <span>更新：<span id="lastUpdateTime">載入中...</span></span>
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-brand-soft animate-ping" id="syncStatusDot"></span>
+            <span id="syncStatusText" class="font-medium text-slate-600 dark:text-slate-300">雲端同步中</span>
+          </p>
+        </div>
+      </div>
+
+      <!-- 右側控制台 -->
+      <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+        <!-- 系統時鐘 -->
+        <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-mono text-slate-600 dark:text-slate-300 border border-slate-200/50 dark:border-slate-700">
+          <i class="bi bi-clock"></i>
+          <span id="liveClock">00:00:00</span>
+        </div>
+
+        <!-- 音效切換 -->
+        <button id="toggleAudioBtn" onclick="toggleAudio()" class="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl transition border border-slate-200/50 dark:border-slate-700" title="切換提示音效">
+          <i id="audioIcon" class="bi bi-volume-up-fill text-brand-primary dark:text-brand-soft"></i>
+        </button>
+
+        <!-- 深色模式切換 -->
+        <button onclick="toggleDarkMode()" class="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl transition border border-slate-200/50 dark:border-slate-700" title="切換深/淺色模式">
+          <i class="bi bi-moon-stars dark:hidden text-brand-primary"></i>
+          <i class="bi bi-sun hidden dark:block text-brand-soft"></i>
+        </button>
+
+        <!-- 手動重新整理 -->
+        <button onclick="manualRefresh()" class="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl transition border border-slate-200/50 dark:border-slate-700" title="手動重新載入">
+          <i class="bi bi-arrow-clockwise text-brand-primary dark:text-brand-soft"></i>
+        </button>
+
+        <!-- 角色快速切換 (護理人員 VS 管理者) -->
+        <div class="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
+          <button id="roleNurseBtn" onclick="setRole('nurse')" class="px-2.5 py-1 rounded-lg font-medium transition duration-200 bg-white dark:bg-brand-primary text-brand-primary dark:text-white shadow-sm">
+            <i class="bi bi-heart-pulse-fill mr-1"></i>護理師
+          </button>
+          <button id="roleAdminBtn" onclick="setRole('admin')" class="px-2.5 py-1 rounded-lg font-medium transition duration-200 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200">
+            <i class="bi bi-shield-lock-fill mr-1"></i>管理者
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <!-- 頂部統計指標卡片區 (即時運算) -->
+    <section class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <!-- 卡片 1: 待運送人數 -->
+      <div class="bg-white dark:bg-brand-darkCard p-4 rounded-2xl shadow-sm border border-slate-200/80 dark:border-slate-800 transition flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">待運送人數</p>
+          <h3 id="statPendingCount" class="text-3xl font-extrabold text-brand-primary dark:text-white mt-1">0</h3>
+          <p class="text-[10px] text-brand-accent mt-1 flex items-center gap-1" id="statOverdueWarning" style="display:none">
+            <span class="inline-block w-2 h-2 rounded-full bg-brand-accent animate-ping"></span>
+            有病人已逾時!
+          </p>
+        </div>
+        <div class="p-3 bg-brand-accent/10 text-brand-accent rounded-xl">
+          <i class="bi bi-people-fill text-xl"></i>
+        </div>
+      </div>
+
+      <!-- 卡片 2: 今日完成 -->
+      <div class="bg-white dark:bg-brand-darkCard p-4 rounded-2xl shadow-sm border border-slate-200/80 dark:border-slate-800 transition flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">今日已送達</p>
+          <h3 id="statCompletedCount" class="text-3xl font-extrabold text-brand-primary dark:text-white mt-1">0</h3>
+          <p class="text-[10px] text-brand-primary dark:text-brand-soft mt-1"><i class="bi bi-check-circle-fill mr-0.5"></i>今日累計運送</p>
+        </div>
+        <div class="p-3 bg-brand-soft/20 text-brand-primary dark:text-brand-soft rounded-xl">
+          <i class="bi bi-patch-check-fill text-xl"></i>
+        </div>
+      </div>
+
+      <!-- 卡片 3: 小床 / 大床 比例 -->
+      <div class="bg-white dark:bg-brand-darkCard p-4 rounded-2xl shadow-sm border border-slate-200/80 dark:border-slate-800 transition flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">床型比例 (小床 / 大床)</p>
+            <h3 id="statBedRatio" class="text-2xl font-bold text-brand-primary dark:text-white mt-1">0 / 0</h3>
+          </div>
+          <div class="p-2.5 bg-brand-soft/20 text-brand-primary dark:text-brand-soft rounded-xl">
+            <i class="bi bi-door-closed-fill text-lg"></i>
+          </div>
+        </div>
+        <!-- 比例進度條 -->
+        <div class="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
+          <div id="bedRatioProgress" class="bg-brand-primary h-full transition-all duration-500" style="width: 50%"></div>
+        </div>
+      </div>
+
+      <!-- 卡片 4: 平均等待時間 -->
+      <div class="bg-white dark:bg-brand-darkCard p-4 rounded-2xl shadow-sm border border-slate-200/80 dark:border-slate-800 transition flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">平均等待時間</p>
+          <h3 id="statAvgWait" class="text-3xl font-extrabold text-brand-primary dark:text-white mt-1">0 <span class="text-sm font-normal text-slate-500">分</span></h3>
+          <p class="text-[10px] text-slate-500 dark:text-slate-400 mt-1"><i class="bi bi-info-circle mr-0.5"></i>今日完成件數之平均</p>
+        </div>
+        <div class="p-3 bg-brand-soft/30 text-brand-primary dark:text-brand-soft rounded-xl">
+          <i class="bi bi-hourglass-split text-xl"></i>
+        </div>
+      </div>
+    </section>
+
+    <!-- 主要工作區：左側新增/右側清單雙欄 -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- 左側：新增運送需求與快捷功能 (佔 4 欄) -->
+      <section class="lg:col-span-4 space-y-6">
+        
+        <!-- 新增運送需求表單卡片 -->
+        <div class="bg-white dark:bg-brand-darkCard p-5 rounded-2xl shadow-sm border border-slate-200/80 dark:border-slate-800 transition">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+            <h2 class="text-base font-bold text-brand-primary dark:text-white flex items-center gap-2">
+              <i class="bi bi-plus-circle text-brand-accent"></i> 新增運送需求
+            </h2>
+            <span class="text-xs text-slate-400 font-normal">請完整填寫</span>
+          </div>
+
+          <form id="addRequestForm" class="space-y-4" onsubmit="handleFormSubmit(event)">
+            <!-- POR 床號 -->
+            <div>
+              <label for="porNumber" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">POR 恢復室床號 <span class="text-brand-accent">*</span></label>
+              <select id="porNumber" required class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+                <option value="">請選擇 POR 床號</option>
+                <!-- POR-01 至 POR-18 -->
+                <script>
+                  for (let i = 1; i <= 18; i++) {
+                    const numStr = i < 10 ? '0' + i : i;
+                    document.write(`<option value="POR-${numStr}">POR-${numStr}</option>`);
+                  }
+                </script>
+              </select>
+            </div>
+
+            <!-- 床位類型 -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">床位類型 <span class="text-brand-accent">*</span></label>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="flex items-center justify-center p-2 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:bg-slate-50 dark:hover:bg-brand-darkBg transition">
+                  <input type="radio" name="bedType" value="小床" checked class="mr-2 text-brand-primary focus:ring-brand-primary">
+                  <span class="text-xs font-medium">小床 (Cot)</span>
+                </label>
+                <label class="flex items-center justify-center p-2 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:bg-slate-50 dark:hover:bg-brand-darkBg transition">
+                  <input type="radio" name="bedType" value="大床" class="mr-2 text-brand-primary focus:ring-brand-primary">
+                  <span class="text-xs font-medium">大床 (Bed)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 病房床號 -->
+            <div>
+              <label for="wardBedNumber" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                病房床號 <span class="text-brand-accent">*</span>
+              </label>
+              <div class="relative">
+                <input type="text" id="wardBedNumber" required placeholder="例如: 5A-01, 7B-12, ICU-03" class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+                <i class="bi bi-geo-alt-fill absolute left-3 top-2.5 text-slate-400 text-sm"></i>
+              </div>
+              <!-- 快捷病房字首 (莫蘭迪風格按鈕) -->
+              <div class="flex flex-wrap gap-1 mt-1.5">
+                <span onclick="appendWardPrefix('5A-')" class="text-[10px] bg-brand-soft/20 hover:bg-brand-soft/40 px-1.5 py-0.5 rounded cursor-pointer text-brand-primary dark:text-brand-soft">5A-</span>
+                <span onclick="appendWardPrefix('7B-')" class="text-[10px] bg-brand-soft/20 hover:bg-brand-soft/40 px-1.5 py-0.5 rounded cursor-pointer text-brand-primary dark:text-brand-soft">7B-</span>
+                <span onclick="appendWardPrefix('8C-')" class="text-[10px] bg-brand-soft/20 hover:bg-brand-soft/40 px-1.5 py-0.5 rounded cursor-pointer text-brand-primary dark:text-brand-soft">8C-</span>
+                <span onclick="appendWardPrefix('ICU-')" class="text-[10px] bg-brand-soft/20 hover:bg-brand-soft/40 px-1.5 py-0.5 rounded cursor-pointer text-brand-primary dark:text-brand-soft">ICU-</span>
+                <span onclick="appendWardPrefix('MICU-')" class="text-[10px] bg-brand-soft/20 hover:bg-brand-soft/40 px-1.5 py-0.5 rounded cursor-pointer text-brand-primary dark:text-brand-soft">MICU-</span>
+              </div>
+            </div>
+
+            <!-- 到達恢復室時間 -->
+            <div>
+              <label for="arrivalTime" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">到達恢復室時間 <span class="text-brand-accent">*</span></label>
+              <input type="datetime-local" id="arrivalTime" required onchange="onArrivalTimeChanged()" class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+              <button type="button" onclick="setArrivalTimeToNow()" class="text-[10px] text-brand-primary dark:text-brand-soft font-semibold hover:underline mt-1 block">
+                <i class="bi bi-clock-history"></i> 設定為目前時間
+              </button>
+            </div>
+
+            <!-- 預計離開時間 -->
+            <div>
+              <label for="estimatedLeaveTime" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">預計離開時間 (預設 +45 分鐘) <span class="text-brand-accent">*</span></label>
+              <input type="datetime-local" id="estimatedLeaveTime" required class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+            </div>
+
+            <!-- 備註 -->
+            <div>
+              <label for="remark" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">備註 (非必填)</label>
+              <textarea id="remark" placeholder="請輸入備註，如：氧氣使用、大體重、急迫等..." rows="2" class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition"></textarea>
+              <!-- 快捷備註標籤 (鋼藍與粉藍搭配) -->
+              <div class="flex flex-wrap gap-1 mt-1.5">
+                <button type="button" onclick="addRemarkTag('攜帶 O2 (3L/min)')" class="text-[10px] border border-brand-soft bg-brand-soft/15 text-brand-primary dark:text-brand-soft px-2 py-0.5 rounded-full hover:bg-brand-soft/30 transition">攜帶 O2</button>
+                <button type="button" onclick="addRemarkTag('術後止痛 (PCA)')" class="text-[10px] border border-brand-soft bg-brand-soft/15 text-brand-primary dark:text-brand-soft px-2 py-0.5 rounded-full hover:bg-brand-soft/30 transition">PCA</button>
+                <button type="button" onclick="addRemarkTag('有引流管')" class="text-[10px] border border-brand-soft bg-brand-soft/15 text-brand-primary dark:text-brand-soft px-2 py-0.5 rounded-full hover:bg-brand-soft/30 transition">引流管</button>
+                <button type="button" onclick="addRemarkTag('需大車運送')" class="text-[10px] border border-brand-soft bg-brand-soft/15 text-brand-primary dark:text-brand-soft px-2 py-0.5 rounded-full hover:bg-brand-soft/30 transition">需大車</button>
+                <button type="button" onclick="addRemarkTag('隔離防護')" class="text-[10px] border border-brand-accent/30 bg-brand-accent/10 text-brand-accent px-2 py-0.5 rounded-full hover:bg-brand-accent/20 transition">隔離</button>
+              </div>
+            </div>
+
+            <!-- 提交按鈕 (使用主體鋼藍) -->
+            <button type="submit" class="w-full bg-brand-primary hover:bg-brand-primary/90 text-white font-semibold rounded-xl py-2.5 px-4 text-sm flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition transform active:scale-95">
+              <i class="bi bi-plus-lg"></i> 加入待運送清單
+            </button>
+          </form>
+        </div>
+
+        <!-- PWA 加入桌面引導卡片 (主體鋼藍漸層輔助粉藍) -->
+        <div class="bg-gradient-to-r from-brand-primary to-[#5176A1] p-5 rounded-2xl shadow-sm text-white space-y-3">
+          <div class="flex items-center gap-3">
+            <div class="p-2 bg-white/10 rounded-xl">
+              <i class="bi bi-phone-vibrate text-xl"></i>
+            </div>
+            <div>
+              <h4 class="font-bold text-sm">支援加入桌面 (PWA)</h4>
+              <p class="text-[10px] text-brand-soft">護理站平板/手機一鍵安裝，免下載</p>
+            </div>
+          </div>
+          <p class="text-xs leading-relaxed text-slate-100">
+            請點擊瀏覽器選單並選擇<strong>「新增至主畫面」</strong>，即可享受全螢幕、離線快取以及原生級操作體驗。
+          </p>
+          <button onclick="simulatePWAInstall()" class="w-full bg-white/20 hover:bg-white/30 text-white font-medium rounded-xl py-1.5 px-3 text-xs flex items-center justify-center gap-1 transition">
+            <i class="bi bi-download"></i> 立即偵測並安裝
+          </button>
+        </div>
+
+        <!-- 系統連接狀態與效能面板 -->
+        <div class="bg-white dark:bg-brand-darkCard p-4 rounded-2xl shadow-sm border border-slate-200/80 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 space-y-2">
+          <div class="flex items-center justify-between">
+            <span>資料庫核心：</span>
+            <span id="databaseCoreText" class="font-mono px-2 py-0.5 bg-brand-soft/20 dark:bg-brand-primary/40 text-brand-primary dark:text-brand-soft rounded font-bold">Firestore Sync</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span>即時同步狀態：</span>
+            <span id="syncLatencyText" class="text-brand-primary dark:text-brand-soft font-semibold flex items-center gap-1"><i class="bi bi-wifi"></i> 連線良好</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span>目前操作者角色：</span>
+            <span id="roleIndicator" class="font-semibold text-slate-700 dark:text-slate-200">護理人員 (Nurse)</span>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- 右側：待運送清單 / 已完成清單與過濾器 (佔 8 欄) -->
+      <section class="lg:col-span-8 space-y-6">
+        
+        <!-- 主要工作清單控制區 -->
+        <div class="bg-white dark:bg-brand-darkCard p-4 rounded-2xl shadow-sm border border-slate-200/80 dark:border-slate-800 transition space-y-4">
+          <!-- 頁籤切換與功能按鈕 -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div class="flex bg-slate-100 dark:bg-slate-850 p-1 rounded-xl w-fit border border-slate-200/50 dark:border-slate-700">
+              <button id="tabPendingBtn" onclick="setTab('pending')" class="px-4 py-1.5 rounded-lg text-xs font-semibold transition bg-white dark:bg-brand-primary text-brand-primary dark:text-white shadow-sm flex items-center gap-1.5">
+                待運送清單 <span id="pendingBadgeCount" class="bg-brand-accent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span>
+              </button>
+              <button id="tabCompletedBtn" onclick="setTab('completed')" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition flex items-center gap-1.5">
+                ☑ 今日已完成 <span id="completedBadgeCount" class="bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span>
+              </button>
+            </div>
+
+            <!-- 管理者獨享操作按鈕群 -->
+            <div id="adminActionGroup" class="hidden flex items-center gap-2">
+              <button onclick="openAuditLogsModal()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs flex items-center gap-1.5 transition border border-slate-200/30 dark:border-slate-700">
+                <i class="bi bi-file-earmark-medical text-brand-primary dark:text-brand-soft"></i> 操作紀錄
+              </button>
+              <button onclick="openExportModal()" class="px-3 py-1.5 bg-brand-soft/15 hover:bg-brand-soft/30 text-brand-primary dark:text-brand-soft rounded-xl text-xs flex items-center gap-1.5 transition font-semibold border border-brand-soft/50">
+                <i class="bi bi-file-earmark-spreadsheet-fill"></i> 匯出 Excel
+              </button>
+            </div>
+          </div>
+
+          <!-- 搜尋與排序欄位 -->
+          <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+            <!-- 搜尋 -->
+            <div class="md:col-span-8 relative">
+              <input type="text" id="searchKeyword" oninput="handleSearchSort()" placeholder="搜尋 POR 床號、病房床號、備註..." class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-8 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+              <i class="bi bi-search absolute left-3 top-2.5 text-slate-400 text-sm"></i>
+              <button id="clearSearchBtn" onclick="clearSearch()" class="absolute right-3 top-2 text-slate-400 hover:text-slate-600 hidden">
+                <i class="bi bi-x-circle-fill"></i>
+              </button>
+            </div>
+            <!-- 排序 -->
+            <div class="md:col-span-4" id="sortContainer">
+              <select id="sortOrder" onchange="handleSearchSort()" class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+                <option value="leaveTimeAsc">預計離開：由近到遠</option>
+                <option value="leaveTimeDesc">預計離開：由遠到近</option>
+                <option value="arrivalTimeAsc">到達時間：由舊到新</option>
+                <option value="porAsc">POR床號：由小到大</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 骨架屏載入動畫 (Skeleton Loading) -->
+        <div id="skeletonLoader" class="space-y-4">
+          <div class="animate-pulse bg-white dark:bg-brand-darkCard p-5 rounded-2xl border border-slate-200 dark:border-slate-800">
+            <div class="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/4 mb-4"></div>
+            <div class="space-y-2">
+              <div class="h-3 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
+              <div class="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
+            </div>
+          </div>
+          <div class="animate-pulse bg-white dark:bg-brand-darkCard p-5 rounded-2xl border border-slate-200 dark:border-slate-800">
+            <div class="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/4 mb-4"></div>
+            <div class="space-y-2">
+              <div class="h-3 bg-slate-200 dark:bg-slate-700 rounded w-5/6"></div>
+              <div class="h-3 bg-slate-200 dark:bg-slate-700 rounded w-2/3"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 待運送 / 已完成病人卡片清單 -->
+        <div id="patientListContainer" class="space-y-4">
+          <!-- 卡片將由 JavaScript 即時動態產生 -->
+        </div>
+
+        <!-- 空白狀態提示 -->
+        <div id="emptyState" class="hidden bg-white dark:bg-brand-darkCard rounded-2xl p-10 text-center border border-dashed border-slate-350 dark:border-slate-800">
+          <div class="w-16 h-16 bg-slate-100 dark:bg-slate-800 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-4">
+            <i class="bi bi-journal-medical text-2xl text-brand-primary dark:text-brand-soft"></i>
+          </div>
+          <h4 class="font-bold text-slate-800 dark:text-slate-100 mb-1">目前無待運送資料</h4>
+          <p class="text-xs text-slate-400">當有恢復室登記回病房的需求時，將在此即時顯示</p>
+        </div>
+
+      </section>
+    </div>
+  </main>
+
+  <!-- 頁尾宣告 -->
+  <footer class="bg-white dark:bg-brand-darkCard border-t border-slate-250 dark:border-slate-800 mt-12 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 space-y-2">
+      <p class="font-medium text-brand-primary dark:text-brand-soft">🏥 恢復室病人運送登記系統 &copy; 2026 版權所有</p>
+      <p>專為護理站設計之即時運算協作系統 · 遵守最高資訊安全性架構</p>
+    </div>
+  </footer>
+
+  <!-- ============================================== -->
+  <!--               MODALS & POPUPS                  -->
+  <!-- ============================================== -->
+
+  <!-- 1. 確認已送達 Modal (護理人員無須填寫) -->
+  <div id="confirmCompleteModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm hidden">
+    <div class="bg-white dark:bg-brand-darkCard rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 max-w-md w-full overflow-hidden transform transition duration-300 scale-95 opacity-0" id="confirmCompleteContent">
+      <div class="p-6">
+        <div class="flex items-center gap-3 text-brand-primary dark:text-brand-soft mb-3">
+          <div class="p-2.5 bg-brand-soft/20 dark:bg-brand-primary/40 rounded-xl">
+            <i class="bi bi-clipboard-check text-2xl"></i>
+          </div>
+          <h3 class="font-bold text-lg">確認已送達病房</h3>
+        </div>
+        <p class="text-sm leading-relaxed text-slate-600 dark:text-slate-300 mb-4" id="confirmCompleteText">
+          是否確認已送達病房？
+        </p>
+      </div>
+      <div class="bg-[#F7F7F7] dark:bg-brand-darkBg px-5 py-3.5 flex items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
+        <button onclick="closeConfirmCompleteModal()" class="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition">
+          取消
+        </button>
+        <button id="confirmCompleteBtn" class="px-5 py-2 bg-brand-primary hover:bg-brand-primary/90 text-white rounded-xl text-xs font-semibold transition shadow-md">
+          確認已送達
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 編輯需求 Modal -->
+  <div id="editRequestModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm hidden">
+    <div class="bg-white dark:bg-brand-darkCard rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 max-w-lg w-full overflow-hidden transform transition duration-300 scale-95 opacity-0" id="editRequestContent">
+      <div class="px-5 py-4 border-b border-slate-150 dark:border-slate-800 flex items-center justify-between">
+        <h3 class="font-bold text-brand-primary dark:text-white flex items-center gap-2">
+          <i class="bi bi-pencil-square text-brand-accent"></i> 修改運送需求資料
+        </h3>
+        <button onclick="closeEditModal()" class="text-slate-400 hover:text-slate-650 dark:hover:text-slate-200"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <form id="editRequestForm" onsubmit="handleEditFormSubmit(event)" class="p-5 space-y-4">
+        <input type="hidden" id="editRequestId">
+        <div class="grid grid-cols-2 gap-4">
+          <!-- POR床號 -->
+          <div>
+            <label for="editPorNumber" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">POR 恢復室床號</label>
+            <select id="editPorNumber" required class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+              <script>
+                for (let i = 1; i <= 18; i++) {
+                  const numStr = i < 10 ? '0' + i : i;
+                  document.write(`<option value="POR-${numStr}">POR-${numStr}</option>`);
+                }
+              </script>
+            </select>
+          </div>
+          <!-- 床位類型 -->
+          <div>
+            <label for="editBedType" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">床位類型</label>
+            <select id="editBedType" class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+              <option value="小床">小床</option>
+              <option value="大床">大床</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 病房床號 -->
+        <div>
+          <label for="editWardBedNumber" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">病房床號</label>
+          <input type="text" id="editWardBedNumber" required class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <!-- 到達恢復室時間 -->
+          <div>
+            <label for="editArrivalTime" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">到達時間</label>
+            <input type="datetime-local" id="editArrivalTime" required onchange="onEditArrivalTimeChanged()" class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+          </div>
+          <!-- 預計離開時間 -->
+          <div>
+            <label for="editEstimatedLeaveTime" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">預計離開時間</label>
+            <input type="datetime-local" id="editEstimatedLeaveTime" required class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition">
+          </div>
+        </div>
+
+        <!-- 備註 -->
+        <div>
+          <label for="editRemark" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">備註</label>
+          <textarea id="editRemark" rows="2" class="w-full bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-primary transition"></textarea>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-2">
+          <button type="button" onclick="closeEditModal()" class="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition">
+            取消修改
+          </button>
+          <button type="submit" class="px-4 py-2 bg-brand-primary hover:bg-brand-primary/95 text-white rounded-xl text-xs font-semibold transition shadow">
+            儲存變更
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. 操作紀錄 (Audit Logs) Modal -->
+  <div id="auditLogsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm hidden">
+    <div class="bg-white dark:bg-brand-darkCard rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 max-w-2xl w-full overflow-hidden transform transition duration-300 scale-95 opacity-0" id="auditLogsContent">
+      <div class="px-5 py-4 border-b border-slate-150 dark:border-slate-800 flex items-center justify-between">
+        <h3 class="font-bold text-brand-primary dark:text-white flex items-center gap-2">
+          <i class="bi bi-clock-history text-slate-500"></i> 系統安全稽核日誌 (Audit Logs)
+        </h3>
+        <button onclick="closeAuditLogsModal()" class="text-slate-400 hover:text-slate-650 dark:hover:text-slate-200"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="p-5 max-h-[60vh] overflow-y-auto space-y-3" id="auditLogsList">
+        <!-- 稽核日誌卡片由 JS 動態塞入 -->
+      </div>
+      <div class="bg-[#F7F7F7] dark:bg-brand-darkBg px-5 py-3 flex items-center justify-between border-t border-slate-200 dark:border-slate-800">
+        <span class="text-[10px] text-slate-400">僅供高權限管理者稽查，所有變更即時紀錄於雲端</span>
+        <button onclick="closeAuditLogsModal()" class="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-850 dark:hover:bg-slate-700 rounded-xl text-xs font-semibold transition text-slate-750 dark:text-slate-300 border border-slate-300/40">
+          關閉
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Excel 匯出選擇 Modal -->
+  <div id="exportExcelModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm hidden">
+    <div class="bg-white dark:bg-brand-darkCard rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 max-w-sm w-full overflow-hidden transform transition duration-300 scale-95 opacity-0" id="exportExcelContent">
+      <div class="p-5">
+        <div class="flex items-center gap-3 text-brand-primary dark:text-brand-soft mb-3">
+          <div class="p-2 bg-brand-soft/20 dark:bg-brand-primary/40 rounded-xl">
+            <i class="bi bi-file-earmark-spreadsheet-fill text-xl"></i>
+          </div>
+          <h3 class="font-bold text-base">匯出報表 (Excel)</h3>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">
+          請選擇您需要匯出的數據範圍，系統將自動處理並產生高品質之工作表檔案：
+        </p>
+        <div class="space-y-2">
+          <button onclick="triggerExcelExport('today')" class="w-full text-left p-3 border border-slate-200 hover:border-brand-primary dark:border-slate-700 hover:bg-brand-soft/10 dark:hover:bg-brand-primary/20 rounded-xl transition flex items-center justify-between">
+            <div>
+              <p class="text-xs font-bold text-brand-primary dark:text-brand-soft">今日所有傳送紀錄</p>
+              <p class="text-[10px] text-slate-400">僅含今天登記及完成的數據</p>
+            </div>
+            <i class="bi bi-chevron-right text-slate-400"></i>
+          </button>
+          <button onclick="triggerExcelExport('month')" class="w-full text-left p-3 border border-slate-200 hover:border-brand-primary dark:border-slate-700 hover:bg-brand-soft/10 dark:hover:bg-brand-primary/20 rounded-xl transition flex items-center justify-between">
+            <div>
+              <p class="text-xs font-bold text-brand-primary dark:text-brand-soft">本月份所有傳送紀錄</p>
+              <p class="text-[10px] text-slate-400">包含本月所有歷史運送數據</p>
+            </div>
+            <i class="bi bi-chevron-right text-slate-400"></i>
+          </button>
+        </div>
+      </div>
+      <div class="bg-[#F7F7F7] dark:bg-brand-darkBg px-5 py-3 flex items-center justify-end border-t border-slate-200 dark:border-slate-800">
+        <button onclick="closeExportModal()" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl text-xs font-semibold transition text-slate-700 dark:text-slate-300 border border-slate-300/40">
+          取消
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. 提示通知 Toast 容器 -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+  <!-- ============================================== -->
+  <!--               APPLICATION LOGIC                -->
+  <!-- ============================================== -->
+  <script>
+    // --------------------------------------------------
+    // 1. 初始化與安全防禦
+    // --------------------------------------------------
+    let db = null;
+    let auth = null;
+    let appId = 'recovery-room-transport';
+    
+    const hasFirebaseConfig = typeof __firebase_config !== 'undefined' && __firebase_config;
+
+    // 狀態管理
+    const state = {
+      requests: [],
+      logs: [],
+      currentTab: 'pending', // 'pending' | 'completed'
+      searchKeyword: '',
+      sortOrder: 'leaveTimeAsc',
+      userRole: 'nurse', // 'nurse' | 'admin'
+      isDarkMode: false,
+      isAudioEnabled: true,
+      lastSyncTime: null,
+      urgentCount: 0
+    };
+
+    // 音效
+    const alertSound = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==");
+
+    // 模擬數據 (高功能預設備用數據)
+    let mockRequests = [
+      {
+        id: "mock-1",
+        porNumber: "POR-02",
+        bedType: "小床",
+        wardBedNumber: "5A-12",
+        arrivalTime: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+        estimatedLeaveTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        remark: "攜帶 O2 (3L/min)",
+        status: "pending",
+        createdBy: "陳美美 護理師",
+        createdAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+        completedAt: null,
+        waitingMinutes: 35
+      },
+      {
+        id: "mock-2",
+        porNumber: "POR-08",
+        bedType: "大床",
+        wardBedNumber: "7B-03",
+        arrivalTime: new Date(Date.now() - 60 * 1000 * 50).toISOString(),
+        estimatedLeaveTime: new Date(Date.now() - 60 * 1000 * 5).toISOString(),
+        remark: "大體重、需多位人員協助",
+        status: "pending",
+        createdBy: "王小明 護理師",
+        createdAt: new Date(Date.now() - 60 * 1000 * 50).toISOString(),
+        completedAt: null,
+        waitingMinutes: 50
+      },
+      {
+        id: "mock-3",
+        porNumber: "POR-05",
+        bedType: "小床",
+        wardBedNumber: "ICU-02",
+        arrivalTime: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        estimatedLeaveTime: new Date(Date.now() + 35 * 60 * 1000).toISOString(),
+        remark: "PCA 自控式止痛",
+        status: "pending",
+        createdBy: "陳美美 護理師",
+        createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        completedAt: null,
+        waitingMinutes: 10
+      },
+      {
+        id: "mock-4",
+        porNumber: "POR-14",
+        bedType: "大床",
+        wardBedNumber: "8C-11",
+        arrivalTime: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        estimatedLeaveTime: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
+        remark: "手術順利",
+        status: "completed",
+        createdBy: "黃偉婷 護理師",
+        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        completedAt: new Date(Date.now() - 1 * 60 * 60 * 1000 - 15 * 60 * 1000).toISOString(),
+        waitingMinutes: 45
+      }
+    ];
+
+    let mockLogs = [
+      {
+        id: "log-1",
+        timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        action: "新增",
+        details: "新增運送需求：POR-14 -> 8C-11",
+        operator: "黃偉婷 護理師"
+      },
+      {
+        id: "log-2",
+        timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000 - 15 * 60 * 1000).toISOString(),
+        action: "完成",
+        details: "完成運送：POR-14 成功抵達 8C-11",
+        operator: "黃偉婷 護理師"
+      }
+    ];
+
+    // --------------------------------------------------
+    // 2. 初始化核心與 Firebase 連線
+    // --------------------------------------------------
+    window.addEventListener('DOMContentLoaded', async () => {
+      setArrivalTimeToNow();
+      
+      // 深色模式載入
+      if (localStorage.getItem('recoveryRoomDarkMode') === 'true' || 
+          (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+        state.isDarkMode = true;
+      }
+
+      setInterval(updateClock, 1000);
+
+      if (hasFirebaseConfig) {
+        try {
+          const config = JSON.parse(__firebase_config);
+          const app = firebase.initializeApp(config);
+          auth = firebase.auth(app);
+          db = firebase.firestore(app);
+          appId = typeof __app_id !== 'undefined' ? __app_id : 'recovery-room-transport';
+          
+          document.getElementById('databaseCoreText').innerText = "Firebase Cloud";
+          await authenticateUser();
+        } catch (e) {
+          console.error("Firebase 連線初始化失敗，改用高功能備用架構:", e);
+          initMockDatabase();
+        }
+      } else {
+        initMockDatabase();
+      }
+
+      setInterval(refreshWaitTimesAndBadges, 1000);
+    });
+
+    async function authenticateUser() {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await auth.signInWithCustomToken(__initial_auth_token);
+        } else {
+          await auth.signInAnonymously();
+        }
+        bindFirestoreLiveSync();
+      } catch (err) {
+        console.error("匿名登入失敗:", err);
+        showToast("雲端安全連線失敗，自動啟用高仿真本機引擎", "error");
+        initMockDatabase();
+      }
+    }
+
+    // --------------------------------------------------
+    // 3. Firestore 即時資料流與 Mock 架構 (RULE 1, 2)
+    // --------------------------------------------------
+    function bindFirestoreLiveSync() {
+      if (!db) return;
+
+      const requestsCol = db.collection('artifacts')
+                            .doc(appId)
+                            .collection('public')
+                            .doc('data')
+                            .collection('transport_requests');
+
+      const logsCol = db.collection('artifacts')
+                        .doc(appId)
+                        .collection('public')
+                        .doc('data')
+                        .collection('audit_logs');
+
+      requestsCol.onSnapshot((querySnapshot) => {
+        const list = [];
+        querySnapshot.forEach((doc) => {
+          list.push({ id: doc.id, ...doc.data() });
+        });
+        state.requests = list;
+        state.lastSyncTime = new Date();
+        updateUI();
+        hideSkeleton();
+        updateSyncStatus(true);
+      }, (error) => {
+        console.error("Firestore 監聽失敗 (病人資料):", error);
+        updateSyncStatus(false);
+      });
+
+      logsCol.onSnapshot((querySnapshot) => {
+        const list = [];
+        querySnapshot.forEach((doc) => {
+          list.push({ id: doc.id, ...doc.data() });
+        });
+        state.logs = list;
+      }, (error) => {
+        console.error("Firestore 監聽失敗 (稽核日誌):", error);
+      });
+    }
+
+    function initMockDatabase() {
+      document.getElementById('databaseCoreText').innerText = "Simulated Core";
+      document.getElementById('syncStatusText').innerText = "本機模擬模式";
+      document.getElementById('syncStatusDot').className = "inline-block w-1.5 h-1.5 rounded-full bg-brand-soft animate-ping";
+      
+      state.requests = [...mockRequests];
+      state.logs = [...mockLogs];
+      state.lastSyncTime = new Date();
+      
+      setTimeout(() => {
+        updateUI();
+        hideSkeleton();
+      }, 800);
+    }
+
+    async function writeRequest(data) {
+      if (db) {
+        const requestsCol = db.collection('artifacts')
+                              .doc(appId)
+                              .collection('public')
+                              .doc('data')
+                              .collection('transport_requests');
+        await requestsCol.doc(data.id).set(data);
+      } else {
+        state.requests.push(data);
+        triggerMockSync();
+      }
+    }
+
+    async function updateRequest(id, updateData) {
+      if (db) {
+        const requestsCol = db.collection('artifacts')
+                              .doc(appId)
+                              .collection('public')
+                              .doc('data')
+                              .collection('transport_requests');
+        await requestsCol.doc(id).update(updateData);
+      } else {
+        const idx = state.requests.findIndex(item => item.id === id);
+        if (idx !== -1) {
+          state.requests[idx] = { ...state.requests[idx], ...updateData };
+          triggerMockSync();
+        }
+      }
+    }
+
+    async function deleteRequestFromDB(id) {
+      if (db) {
+        const requestsCol = db.collection('artifacts')
+                              .doc(appId)
+                              .collection('public')
+                              .doc('data')
+                              .collection('transport_requests');
+        await requestsCol.doc(id).delete();
+      } else {
+        state.requests = state.requests.filter(item => item.id !== id);
+        triggerMockSync();
+      }
+    }
+
+    async function writeAuditLog(action, details) {
+      const operator = state.userRole === 'admin' ? "系統管理員" : "值班護理師";
+      const logData = {
+        id: "log_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
+        timestamp: new Date().toISOString(),
+        action: action,
+        details: details,
+        operator: operator
+      };
+
+      if (db) {
+        const logsCol = db.collection('artifacts')
+                          .doc(appId)
+                          .collection('public')
+                          .doc('data')
+                          .collection('audit_logs');
+        await logsCol.doc(logData.id).set(logData);
+      } else {
+        state.logs.unshift(logData);
+      }
+    }
+
+    function triggerMockSync() {
+      state.lastSyncTime = new Date();
+      updateUI();
+    }
+
+    // --------------------------------------------------
+    // 4. 使用者界面與數據過濾處理
+    // --------------------------------------------------
+    function updateUI() {
+      if (state.lastSyncTime) {
+        const hours = String(state.lastSyncTime.getHours()).padStart(2, '0');
+        const minutes = String(state.lastSyncTime.getMinutes()).padStart(2, '0');
+        const seconds = String(state.lastSyncTime.getSeconds()).padStart(2, '0');
+        document.getElementById('lastUpdateTime').innerText = `${hours}:${minutes}:${seconds}`;
+      }
+
+      const filtered = getFilteredAndSortedRequests();
+      renderPatientCards(filtered);
+      calculateAndRenderStats();
+
+      const activeCount = state.requests.filter(r => r.status === 'pending').length;
+      const todayCompletedCount = state.requests.filter(r => {
+        if (r.status !== 'completed') return false;
+        const compDate = new Date(r.completedAt);
+        const today = new Date();
+        return compDate.toDateString() === today.toDateString();
+      }).length;
+
+      document.getElementById('pendingBadgeCount').innerText = activeCount;
+      document.getElementById('completedBadgeCount').innerText = todayCompletedCount;
+    }
+
+    // --------------------------------------------------
+    // 5. 數據分析與珊瑚橘警示監聽
+    // --------------------------------------------------
+    function calculateAndRenderStats() {
+      const active = state.requests.filter(r => r.status === 'pending');
+      const completed = state.requests.filter(r => r.status === 'completed');
+
+      document.getElementById('statPendingCount').innerText = active.length;
+
+      const todayStr = new Date().toDateString();
+      const todayCompleted = completed.filter(r => {
+        if (!r.completedAt) return false;
+        return new Date(r.completedAt).toDateString() === todayStr;
+      });
+      document.getElementById('statCompletedCount').innerText = todayCompleted.length;
+
+      const cotCount = active.filter(r => r.bedType === '小床').length;
+      const bedCount = active.filter(r => r.bedType === '大床').length;
+      document.getElementById('statBedRatio').innerText = `${cotCount} / ${bedCount}`;
+
+      const totalActive = active.length;
+      const progressWidth = totalActive > 0 ? (cotCount / totalActive) * 100 : 50;
+      document.getElementById('bedRatioProgress').style.width = `${progressWidth}%`;
+
+      let avgWait = 0;
+      if (todayCompleted.length > 0) {
+        const totalWait = todayCompleted.reduce((acc, curr) => acc + (curr.waitingMinutes || 0), 0);
+        avgWait = Math.round(totalWait / todayCompleted.length);
+      }
+      document.getElementById('statAvgWait').innerHTML = `${avgWait} <span class="text-sm font-normal text-slate-500">分</span>`;
+
+      // 珊瑚橘過期提醒計時
+      let urgentRequests = 0;
+      active.forEach(r => {
+        const diff = new Date(r.estimatedLeaveTime) - new Date();
+        if (diff < 15 * 60 * 1000) {
+          urgentRequests++;
+        }
+      });
+
+      const banner = document.getElementById('urgentAlertBanner');
+      const overdueWarning = document.getElementById('statOverdueWarning');
+
+      if (urgentRequests > 0) {
+        banner.classList.remove('hidden');
+        overdueWarning.style.display = 'block';
+        if (urgentRequests > state.urgentCount) {
+          playAlertSound();
+          showToast(`⚠️ 注意：有 ${urgentRequests} 位病人接近或已超過預計離開時間！`, "warning");
+        }
+      } else {
+        banner.classList.add('hidden');
+        overdueWarning.style.display = 'none';
+      }
+      state.urgentCount = urgentRequests;
+    }
+
+    function refreshWaitTimesAndBadges() {
+      calculateAndRenderStats();
+      const filtered = getFilteredAndSortedRequests();
+      renderPatientCards(filtered);
+    }
+
+    function getFilteredAndSortedRequests() {
+      let list = state.requests.filter(r => r.status === state.currentTab);
+
+      if (state.currentTab === 'completed') {
+        const todayStr = new Date().toDateString();
+        list = list.filter(r => {
+          if (!r.completedAt) return false;
+          return new Date(r.completedAt).toDateString() === todayStr;
+        });
+      }
+
+      if (state.searchKeyword.trim() !== '') {
+        const kw = state.searchKeyword.toLowerCase().trim();
+        list = list.filter(r => 
+          r.porNumber.toLowerCase().includes(kw) ||
+          r.wardBedNumber.toLowerCase().includes(kw) ||
+          (r.remark && r.remark.toLowerCase().includes(kw))
+        );
+      }
+
+      if (state.currentTab === 'pending') {
+        if (state.sortOrder === 'leaveTimeAsc') {
+          list.sort((a, b) => new Date(a.estimatedLeaveTime) - new Date(b.estimatedLeaveTime));
+        } else if (state.sortOrder === 'leaveTimeDesc') {
+          list.sort((a, b) => new Date(b.estimatedLeaveTime) - new Date(a.estimatedLeaveTime));
+        } else if (state.sortOrder === 'arrivalTimeAsc') {
+          list.sort((a, b) => new Date(a.arrivalTime) - new Date(b.arrivalTime));
+        } else if (state.sortOrder === 'porAsc') {
+          list.sort((a, b) => a.porNumber.localeCompare(b.porNumber, undefined, {numeric: true, sensitivity: 'base'}));
+        }
+      } else {
+        list.sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+      }
+
+      return list;
+    }
+
+    function hideSkeleton() {
+      const skeleton = document.getElementById('skeletonLoader');
+      if (skeleton) skeleton.classList.add('hidden');
+    }
+
+    function updateSyncStatus(connected) {
+      const text = document.getElementById('syncStatusText');
+      const dot = document.getElementById('syncStatusDot');
+      if (connected) {
+        text.innerText = "雲端即時同步中";
+        dot.className = "inline-block w-1.5 h-1.5 rounded-full bg-brand-soft animate-ping";
+      } else {
+        text.innerText = "連線不穩定";
+        dot.className = "inline-block w-1.5 h-1.5 rounded-full bg-brand-accent animate-ping";
+      }
+    }
+
+    // 渲染卡片 (導入 #EE6C4D, #3D5A80, #98C1D9 配色)
+    function renderPatientCards(list) {
+      const container = document.getElementById('patientListContainer');
+      const emptyState = document.getElementById('emptyState');
+      container.innerHTML = '';
+
+      if (list.length === 0) {
+        emptyState.classList.remove('hidden');
+        return;
+      }
+      emptyState.classList.add('hidden');
+
+      list.forEach(item => {
+        const now = new Date();
+        const estLeave = new Date(item.estimatedLeaveTime);
+        const diffMs = estLeave - now;
+        const remainingMinutes = Math.ceil(diffMs / 60000);
+        
+        const arrTimeStr = formatDateTimeString(item.arrivalTime);
+        const estLeaveStr = formatDateTimeString(item.estimatedLeaveTime);
+
+        let badgeClass = '';
+        let cardBgClass = 'bg-white dark:bg-brand-darkCard';
+        let remainingText = '';
+
+        if (state.currentTab === 'pending') {
+          if (remainingMinutes > 15) {
+            // 正常：鋼藍與粉藍標籤
+            badgeClass = 'bg-brand-soft/20 text-brand-primary dark:text-brand-soft border border-brand-soft/40';
+            remainingText = `<i class="bi bi-clock-history mr-1 text-brand-primary dark:text-brand-soft"></i> 剩餘 ${remainingMinutes} 分鐘`;
+          } else if (remainingMinutes >= 0 && remainingMinutes <= 15) {
+            // 警告臨近：亮色調珊瑚橘
+            badgeClass = 'bg-brand-accent/15 text-brand-accent border border-brand-accent/30';
+            remainingText = `<i class="bi bi-exclamation-triangle-fill mr-1 text-brand-accent animate-bounce"></i> 剩餘 ${remainingMinutes} 分鐘`;
+          } else {
+            // 逾時：珊瑚橘閃爍警示
+            badgeClass = 'bg-brand-accent/35 text-brand-accent border border-brand-accent/70 font-bold';
+            cardBgClass = 'animate-blink-danger';
+            remainingText = `<i class="bi bi-bell-fill mr-1 animate-pulse text-brand-accent"></i> 已逾時 ${Math.abs(remainingMinutes)} 分鐘`;
+          }
+        } else {
+          badgeClass = 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400';
+          remainingText = `<i class="bi bi-check2-circle mr-1"></i> 已安全送達`;
+        }
+
+        let actionButtonsHtml = '';
+        if (state.currentTab === 'pending') {
+          actionButtonsHtml = `
+            <button onclick="triggerCompleteFlow('${item.id}', '${item.porNumber}', '${item.wardBedNumber}')" class="flex-1 py-2 px-3 bg-brand-primary hover:bg-brand-primary/90 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition active:scale-95 shadow">
+              <i class="bi bi-send-check"></i> 送達完成
+            </button>
+            <button onclick="openEditModal('${item.id}')" class="py-2 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs flex items-center justify-center border border-slate-200/50 dark:border-slate-700 transition">
+              <i class="bi bi-pencil-square text-brand-primary dark:text-brand-soft"></i>
+            </button>
+          `;
+          if (state.userRole === 'admin') {
+            actionButtonsHtml += `
+              <button onclick="handleDeleteRequest('${item.id}', '${item.porNumber}')" class="py-2 px-3 bg-brand-accent/10 hover:bg-brand-accent/20 text-brand-accent rounded-xl text-xs flex items-center justify-center transition" title="刪除紀錄">
+                <i class="bi bi-trash3-fill"></i>
+              </button>
+            `;
+          }
+        } else {
+          const duration = item.waitingMinutes || 0;
+          actionButtonsHtml = `
+            <div class="text-[11px] text-slate-500 dark:text-slate-400 w-full flex flex-col gap-1">
+              <div class="flex items-center justify-between">
+                <span>完成時間：</span>
+                <span class="font-medium text-slate-850 dark:text-slate-200">${formatDateTimeString(item.completedAt)}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span>總等待時間：</span>
+                <span class="font-bold text-brand-primary dark:text-brand-soft">${duration} 分鐘</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span>登記來源：</span>
+                <span class="font-medium text-brand-primary dark:text-brand-soft">${item.createdBy || '值班護理師'}</span>
+              </div>
+            </div>
+          `;
+          if (state.userRole === 'admin') {
+            actionButtonsHtml += `
+              <div class="w-full pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                <button onclick="handleDeleteRequest('${item.id}', '${item.porNumber}')" class="py-1 px-2.5 bg-brand-accent/10 hover:bg-brand-accent/20 text-brand-accent rounded-lg text-[10px] flex items-center gap-1 transition">
+                  <i class="bi bi-trash3"></i> 刪除紀錄
+                </button>
+              </div>
+            `;
+          }
+        }
+
+        const card = document.createElement('div');
+        card.className = `${cardBgClass} p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm transition hover:shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4`;
+        card.innerHTML = `
+          <!-- 卡片左：主要病人資訊 -->
+          <div class="space-y-2 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-base font-black px-3 py-1 bg-brand-primary text-white dark:bg-white dark:text-brand-primary rounded-xl tracking-wide">${item.porNumber}</span>
+              <span class="text-xs font-bold px-2 py-1 bg-brand-soft/20 text-brand-primary dark:text-brand-soft rounded-lg flex items-center gap-1">
+                <i class="bi bi-tag-fill text-[10px]"></i> ${item.bedType}
+              </span>
+              <span class="text-xs font-bold px-2.5 py-1 bg-brand-accent text-white rounded-lg flex items-center gap-1">
+                <i class="bi bi-arrow-right-short"></i> ${item.wardBedNumber}
+              </span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 pt-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <div class="space-y-0.5">
+                <p class="text-[10px] text-slate-450 dark:text-slate-500">到達恢復室時間</p>
+                <p class="font-medium text-slate-700 dark:text-slate-300">${arrTimeStr}</p>
+              </div>
+              <div class="space-y-0.5">
+                <p class="text-[10px] text-slate-450 dark:text-slate-500">預計離開時間</p>
+                <p class="font-medium text-slate-700 dark:text-slate-300">${estLeaveStr}</p>
+              </div>
+            </div>
+
+            ${item.remark ? `
+              <div class="bg-brand-soft/10 dark:bg-brand-primary/10 p-2.5 rounded-xl border border-brand-soft/20 dark:border-brand-primary/20 text-xs text-slate-650 dark:text-slate-300 flex items-start gap-1.5 mt-2">
+                <i class="bi bi-chat-left-dots-fill text-brand-primary dark:text-brand-soft mt-0.5"></i>
+                <span class="leading-relaxed">${item.remark}</span>
+              </div>
+            ` : ''}
+          </div>
+
+          <!-- 卡片右：計時與操作 -->
+          <div class="flex flex-col items-stretch md:items-end gap-3 min-w-[200px]">
+            <div class="text-right flex flex-row md:flex-col items-center md:items-end justify-between md:justify-start gap-2">
+              <span class="text-[10px] text-slate-400 block md:hidden">時程狀態：</span>
+              <span class="px-3 py-1 rounded-full text-xs font-bold ${badgeClass} inline-flex items-center">
+                ${remainingText}
+              </span>
+            </div>
+            <div class="flex items-center gap-2 w-full">
+              ${actionButtonsHtml}
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // --------------------------------------------------
+    // 6. 表單提交
+    // --------------------------------------------------
+    function handleFormSubmit(e) {
+      e.preventDefault();
+
+      const porNum = document.getElementById('porNumber').value;
+      const bedType = document.querySelector('input[name="bedType"]:checked').value;
+      const wardBed = document.getElementById('wardBedNumber').value.trim();
+      const arrival = document.getElementById('arrivalTime').value;
+      const estimated = document.getElementById('estimatedLeaveTime').value;
+      const remark = document.getElementById('remark').value.trim();
+
+      if (!porNum || !wardBed || !arrival || !estimated) {
+        showToast("請務必填寫必填欄位 (*)", "error");
+        return;
+      }
+
+      const isDuplicate = state.requests.some(r => r.status === 'pending' && r.porNumber === porNum);
+      if (isDuplicate) {
+        showToast(`床位 ${porNum} 已在待運送清單中！`, "error");
+        return;
+      }
+
+      const operatorName = state.userRole === 'admin' ? "管理員手動輸入" : "值班護理師";
+
+      const newRequest = {
+        id: "req_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
+        porNumber: porNum,
+        bedType: bedType,
+        wardBedNumber: wardBed,
+        arrivalTime: new Date(arrival).toISOString(),
+        estimatedLeaveTime: new Date(estimated).toISOString(),
+        remark: remark,
+        status: "pending",
+        createdBy: operatorName,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+        waitingMinutes: 0
+      };
+
+      writeRequest(newRequest);
+      writeAuditLog("新增", `登記新傳送需求：${porNum} -> ${wardBed} (${bedType})`);
+      showToast("➕ 成功加入待運送清單！", "success");
+
+      document.getElementById('porNumber').value = '';
+      document.getElementById('wardBedNumber').value = '';
+      document.getElementById('remark').value = '';
+      setArrivalTimeToNow();
+    }
+
+    function setArrivalTimeToNow() {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      const nowStr = now.toISOString().slice(0, 16);
+      document.getElementById('arrivalTime').value = nowStr;
+      calculateEstimatedLeave(nowStr, 'estimatedLeaveTime');
+    }
+
+    function onArrivalTimeChanged() {
+      const arrVal = document.getElementById('arrivalTime').value;
+      calculateEstimatedLeave(arrVal, 'estimatedLeaveTime');
+    }
+
+    function onEditArrivalTimeChanged() {
+      const arrVal = document.getElementById('editArrivalTime').value;
+      calculateEstimatedLeave(arrVal, 'editEstimatedLeaveTime');
+    }
+
+    function calculateEstimatedLeave(arrivalTimeStr, targetInputId) {
+      if (!arrivalTimeStr) return;
+      const arrDate = new Date(arrivalTimeStr);
+      arrDate.setMinutes(arrDate.getMinutes() + 45);
+      arrDate.setMinutes(arrDate.getMinutes() - arrDate.getTimezoneOffset());
+      document.getElementById(targetInputId).value = arrDate.toISOString().slice(0, 16);
+    }
+
+    function appendWardPrefix(prefix) {
+      const input = document.getElementById('wardBedNumber');
+      input.value = prefix;
+      input.focus();
+    }
+
+    function addRemarkTag(tag) {
+      const textarea = document.getElementById('remark');
+      if (textarea.value.trim() === '') {
+        textarea.value = tag;
+      } else {
+        textarea.value += "、" + tag;
+      }
+      textarea.focus();
+    }
+
+    // --------------------------------------------------
+    // 7. 送達完成 (無需填寫執行護理師，一鍵安全抵達)
+    // --------------------------------------------------
+    let pendingCompleteId = null;
+
+    function triggerCompleteFlow(id, porNumber, wardBedNumber) {
+      pendingCompleteId = id;
+      const modal = document.getElementById('confirmCompleteModal');
+      const content = document.getElementById('confirmCompleteContent');
+      document.getElementById('confirmCompleteText').innerHTML = `您是否確認 <strong>${porNumber}</strong> 的病人已安全送達病房 <strong>${wardBedNumber}</strong>？`;
+      
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        content.classList.remove('scale-95', 'opacity-0');
+      }, 50);
+
+      document.getElementById('confirmCompleteBtn').onclick = submitCompleteFlow;
+    }
+
+    async function submitCompleteFlow() {
+      if (!pendingCompleteId) return;
+
+      const target = state.requests.find(r => r.id === pendingCompleteId);
+      if (!target) return;
+
+      const now = new Date();
+      const arr = new Date(target.arrivalTime);
+      const diffMin = Math.max(1, Math.round((now - arr) / 60000));
+
+      const updateData = {
+        status: "completed",
+        completedAt: now.toISOString(),
+        waitingMinutes: diffMin
+      };
+
+      await updateRequest(pendingCompleteId, updateData);
+      writeAuditLog("完成", `運送已完成：${target.porNumber} -> ${target.wardBedNumber}，共花費 ${diffMin} 分鐘`);
+      
+      closeConfirmCompleteModal();
+      showToast("🚀 運送完成！資料已同步", "success");
+    }
+
+    function closeConfirmCompleteModal() {
+      const modal = document.getElementById('confirmCompleteModal');
+      const content = document.getElementById('confirmCompleteContent');
+      content.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+        modal.classList.add('hidden');
+      }, 300);
+      pendingCompleteId = null;
+    }
+
+    // --------------------------------------------------
+    // 8. 編輯與刪除行為
+    // --------------------------------------------------
+    function openEditModal(id) {
+      const target = state.requests.find(r => r.id === id);
+      if (!target) return;
+
+      document.getElementById('editRequestId').value = target.id;
+      document.getElementById('editPorNumber').value = target.porNumber;
+      document.getElementById('editBedType').value = target.bedType;
+      document.getElementById('editWardBedNumber').value = target.wardBedNumber;
+      
+      const arr = new Date(target.arrivalTime);
+      arr.setMinutes(arr.getMinutes() - arr.getTimezoneOffset());
+      document.getElementById('editArrivalTime').value = arr.toISOString().slice(0, 16);
+
+      const est = new Date(target.estimatedLeaveTime);
+      est.setMinutes(est.getMinutes() - est.getTimezoneOffset());
+      document.getElementById('editEstimatedLeaveTime').value = est.toISOString().slice(0, 16);
+
+      document.getElementById('editRemark').value = target.remark || '';
+
+      const modal = document.getElementById('editRequestModal');
+      const content = document.getElementById('editRequestContent');
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        content.classList.remove('scale-95', 'opacity-0');
+      }, 50);
+    }
+
+    function closeEditModal() {
+      const modal = document.getElementById('editRequestModal');
+      const content = document.getElementById('editRequestContent');
+      content.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+        modal.classList.add('hidden');
+      }, 300);
+    }
+
+    async function handleEditFormSubmit(e) {
+      e.preventDefault();
+      const id = document.getElementById('editRequestId').value;
+      const porNum = document.getElementById('editPorNumber').value;
+      const bedType = document.getElementById('editBedType').value;
+      const wardBed = document.getElementById('editWardBedNumber').value.trim();
+      const arrival = document.getElementById('editArrivalTime').value;
+      const estLeave = document.getElementById('editEstimatedLeaveTime').value;
+      const remark = document.getElementById('editRemark').value.trim();
+
+      const updateData = {
+        porNumber: porNum,
+        bedType: bedType,
+        wardBedNumber: wardBed,
+        arrivalTime: new Date(arrival).toISOString(),
+        estimatedLeaveTime: new Date(estLeave).toISOString(),
+        remark: remark
+      };
+
+      await updateRequest(id, updateData);
+      writeAuditLog("修改", `修改病人需求資料：${porNum} -> ${wardBed}`);
+      closeEditModal();
+      showToast("📝 修改資料成功並已同步", "success");
+    }
+
+    async function handleDeleteRequest(id, porNumber) {
+      if (state.userRole !== 'admin') {
+        showToast("錯誤：僅有系統管理者有權限刪除！", "error");
+        return;
+      }
+
+      if (confirm(`【安全警告】您是否確定要永久刪除 ${porNumber} 的運送紀錄？此操作將無法還原。`)) {
+        await deleteRequestFromDB(id);
+        writeAuditLog("刪除", `永久刪除運送登記：${porNumber}`);
+        showToast("🗑 紀錄已被永久移除", "success");
+      }
+    }
+
+    // --------------------------------------------------
+    // 9. 系統切換與介面工具
+    // --------------------------------------------------
+    function setRole(role) {
+      state.userRole = role;
+      
+      const nurseBtn = document.getElementById('roleNurseBtn');
+      const adminBtn = document.getElementById('roleAdminBtn');
+      const adminGroup = document.getElementById('adminActionGroup');
+      const indicator = document.getElementById('roleIndicator');
+
+      if (role === 'admin') {
+        adminBtn.className = "px-2.5 py-1 rounded-lg font-medium transition duration-200 bg-white dark:bg-brand-primary text-brand-accent shadow-sm";
+        nurseBtn.className = "px-2.5 py-1 rounded-lg font-medium transition duration-200 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200";
+        adminGroup.classList.remove('hidden');
+        indicator.innerText = "系統管理員 (Administrator)";
+        showToast("🔐 權限提升：進入管理者模式", "success");
+      } else {
+        nurseBtn.className = "px-2.5 py-1 rounded-lg font-medium transition duration-200 bg-white dark:bg-brand-primary text-brand-primary dark:text-white shadow-sm";
+        adminBtn.className = "px-2.5 py-1 rounded-lg font-medium transition duration-200 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200";
+        adminGroup.classList.add('hidden');
+        indicator.innerText = "護理人員 (Nurse)";
+        showToast("🔓 已切換回一般護理人員模式", "info");
+      }
+      updateUI();
+    }
+
+    function setTab(tab) {
+      state.currentTab = tab;
+      const pBtn = document.getElementById('tabPendingBtn');
+      const cBtn = document.getElementById('tabCompletedBtn');
+      const sCont = document.getElementById('sortContainer');
+
+      if (tab === 'pending') {
+        pBtn.className = "px-4 py-1.5 rounded-lg text-xs font-semibold transition bg-white dark:bg-brand-primary text-slate-800 dark:text-white shadow-sm flex items-center gap-1.5";
+        cBtn.className = "px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition flex items-center gap-1.5";
+        sCont.style.visibility = 'visible';
+      } else {
+        cBtn.className = "px-4 py-1.5 rounded-lg text-xs font-semibold transition bg-white dark:bg-brand-primary text-slate-800 dark:text-white shadow-sm flex items-center gap-1.5";
+        pBtn.className = "px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition flex items-center gap-1.5";
+        sCont.style.visibility = 'hidden';
+      }
+      updateUI();
+    }
+
+    function handleSearchSort() {
+      state.searchKeyword = document.getElementById('searchKeyword').value;
+      state.sortOrder = document.getElementById('sortOrder').value;
+
+      const clearBtn = document.getElementById('clearSearchBtn');
+      if (state.searchKeyword.length > 0) {
+        clearBtn.classList.remove('hidden');
+      } else {
+        clearBtn.classList.add('hidden');
+      }
+
+      updateUI();
+    }
+
+    function clearSearch() {
+      document.getElementById('searchKeyword').value = '';
+      state.searchKeyword = '';
+      document.getElementById('clearSearchBtn').classList.add('hidden');
+      updateUI();
+    }
+
+    function toggleDarkMode() {
+      state.isDarkMode = !state.isDarkMode;
+      if (state.isDarkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('recoveryRoomDarkMode', 'true');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('recoveryRoomDarkMode', 'false');
+      }
+    }
+
+    function toggleAudio() {
+      state.isAudioEnabled = !state.isAudioEnabled;
+      const icon = document.getElementById('audioIcon');
+      if (state.isAudioEnabled) {
+        icon.className = "bi bi-volume-up-fill text-brand-primary dark:text-brand-soft";
+        showToast("🔊 提示鈴聲已啟用", "info");
+      } else {
+        icon.className = "bi bi-volume-mute-fill text-slate-400";
+        showToast("🔇 提示鈴聲已靜音", "info");
+      }
+    }
+
+    function playAlertSound() {
+      if (state.isAudioEnabled) {
+        alertSound.play().catch(e => console.log("音效撥放失敗 (受瀏覽器安全限制)", e));
+      }
+    }
+
+    function closeAlertBanner() {
+      document.getElementById('urgentAlertBanner').classList.add('hidden');
+    }
+
+    function manualRefresh() {
+      showToast("🔄 即時同步刷新完成", "success");
+      updateUI();
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+      document.getElementById('liveClock').innerText = timeStr;
+    }
+
+    // --------------------------------------------------
+    // 10. 稽核日誌與 Excel 導出核心 (SheetJS)
+    // --------------------------------------------------
+    function openAuditLogsModal() {
+      if (state.userRole !== 'admin') {
+        showToast("僅限管理員開啟", "error");
+        return;
+      }
+
+      const listDiv = document.getElementById('auditLogsList');
+      listDiv.innerHTML = '';
+
+      if (state.logs.length === 0) {
+        listDiv.innerHTML = '<div class="text-center text-xs text-slate-400 py-6">目前無任何操作日誌紀錄</div>';
+      } else {
+        const sortedLogs = [...state.logs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        sortedLogs.forEach(log => {
+          let badgeColor = "bg-slate-100 text-slate-600";
+          if (log.action === "新增") badgeColor = "bg-brand-soft/20 text-brand-primary dark:bg-brand-primary/40 dark:text-brand-soft";
+          if (log.action === "修改") badgeColor = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+          if (log.action === "完成") badgeColor = "bg-brand-soft/30 text-brand-primary dark:bg-brand-primary/60 dark:text-brand-soft";
+          if (log.action === "刪除") badgeColor = "bg-brand-accent/20 text-brand-accent";
+
+          const item = document.createElement('div');
+          item.className = "p-3 bg-[#F7F7F7] dark:bg-brand-darkBg border border-slate-200/60 dark:border-slate-800 rounded-xl flex items-start gap-3 text-xs";
+          item.innerHTML = `
+            <span class="px-2 py-0.5 rounded font-bold ${badgeColor} text-[10px] whitespace-nowrap">${log.action}</span>
+            <div class="flex-1 space-y-1">
+              <p class="text-slate-700 dark:text-slate-300 font-medium">${log.details}</p>
+              <div class="flex justify-between text-[10px] text-slate-400">
+                <span>操作人員: ${log.operator}</span>
+                <span>時間: ${formatDateTimeString(log.timestamp)}</span>
+              </div>
+            </div>
+          `;
+          listDiv.appendChild(item);
+        });
+      }
+
+      const modal = document.getElementById('auditLogsModal');
+      const content = document.getElementById('auditLogsContent');
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        content.classList.remove('scale-95', 'opacity-0');
+      }, 50);
+    }
+
+    function closeAuditLogsModal() {
+      const modal = document.getElementById('auditLogsModal');
+      const content = document.getElementById('auditLogsContent');
+      content.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+        modal.classList.add('hidden');
+      }, 300);
+    }
+
+    function openExportModal() {
+      if (state.userRole !== 'admin') {
+        showToast("權限不足", "error");
+        return;
+      }
+      const modal = document.getElementById('exportExcelModal');
+      const content = document.getElementById('exportExcelContent');
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        content.classList.remove('scale-95', 'opacity-0');
+      }, 50);
+    }
+
+    function closeExportModal() {
+      const modal = document.getElementById('exportExcelModal');
+      const content = document.getElementById('exportExcelContent');
+      content.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+        modal.classList.add('hidden');
+      }, 300);
+    }
+
+    function triggerExcelExport(range) {
+      let list = [...state.requests];
+      const today = new Date();
+
+      if (range === 'today') {
+        list = list.filter(r => {
+          const date = new Date(r.arrivalTime);
+          return date.toDateString() === today.toDateString();
+        });
+      } else if (range === 'month') {
+        list = list.filter(r => {
+          const date = new Date(r.arrivalTime);
+          return date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
+        });
+      }
+
+      if (list.length === 0) {
+        showToast("所選日期範圍內查無運送資料！", "error");
+        return;
+      }
+
+      const sheetData = list.map((item, idx) => ({
+        "項次": idx + 1,
+        "POR 恢復床號": item.porNumber,
+        "病房床號": item.wardBedNumber,
+        "床位類型": item.bedType,
+        "狀態": item.status === 'pending' ? "待運送" : "已抵達",
+        "到達時間": formatDateTimeString(item.arrivalTime),
+        "預計離開時間": formatDateTimeString(item.estimatedLeaveTime),
+        "實際抵達時間": item.completedAt ? formatDateTimeString(item.completedAt) : "無紀錄",
+        "等待時間 (分鐘)": item.status === 'completed' ? item.waitingMinutes : "待運算",
+        "備註": item.remark || "",
+        "登記護理師": item.createdBy || "值班護理師"
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(sheetData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "恢復室傳送統計");
+
+      const filename = `恢復室病人運送登記表_${range === 'today' ? '今日' : '本月'}_${today.getFullYear()}${today.getMonth()+1}${today.getDate()}.xlsx`;
+      XLSX.writeFile(wb, filename);
+
+      writeAuditLog("匯出", `匯出 Excel 報表：範圍為 ${range === 'today' ? '今日' : '本月'}`);
+      closeExportModal();
+      showToast("📊 Excel 報表匯出成功！", "success");
+    }
+
+    // --------------------------------------------------
+    // Helpers
+    // --------------------------------------------------
+    function formatDateTimeString(isoString) {
+      if (!isoString) return "";
+      const date = new Date(isoString);
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${date.getMonth() + 1}/${date.getDate()} ${hours}:${minutes}`;
+    }
+
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      
+      let icon = "bi-check-circle-fill text-brand-primary dark:text-brand-soft";
+      if (type === 'error') icon = "bi-x-circle-fill text-brand-accent";
+      if (type === 'warning') icon = "bi-exclamation-triangle-fill text-brand-accent";
+      if (type === 'info') icon = "bi-info-circle-fill text-brand-primary dark:text-brand-soft";
+
+      toast.className = "bg-white dark:bg-brand-darkCard text-slate-850 dark:text-slate-100 p-4 rounded-xl shadow-lg border border-slate-200/80 dark:border-slate-800 flex items-center gap-3 text-xs font-semibold animate-bounce duration-300 pointer-events-auto cursor-pointer";
+      toast.innerHTML = `
+        <i class="bi ${icon} text-base"></i>
+        <div class="flex-1">${message}</div>
+      `;
+
+      toast.onclick = () => toast.remove();
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'transition', 'duration-500');
+        setTimeout(() => toast.remove(), 500);
+      }, 4000);
+    }
+
+    function simulatePWAInstall() {
+      showToast("📱 正在啟用 PWA 快取與獨立視窗設定...", "info");
+      setTimeout(() => {
+        showToast("✨ 恭喜！您可隨時在網址列右側點擊「下載/安裝」此系統。", "success");
+      }, 1500);
+    }
+  </script>
+</body>
+</html>
